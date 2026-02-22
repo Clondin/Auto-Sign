@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for AutoSign","local":true,"windows":["main"],"permissions":["core:default","fs:allow-temp-write","fs:allow-temp-read","drag:default"]}}

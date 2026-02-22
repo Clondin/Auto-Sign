@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppStep, SignatureData } from './types';
 import { UploadDropzone } from './components/UploadDropzone';
 import { SignaturePad } from './components/SignaturePad';
 import { SigningWorkspace } from './components/SigningWorkspace';
 import { PenTool, CheckCircle, ShieldCheck, FileText, ArrowRight, Download, Mail, Share2 } from 'lucide-react';
 import { Button } from './components/Button';
+import { isDesktop } from './services/platform';
+import { startNativeDrag } from './services/tauriDrag';
+import { useTauriFileOpen } from './hooks/useTauriFileOpen';
 
 export default function App() {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
@@ -31,10 +34,13 @@ export default function App() {
     checkShareSupport();
   }, []);
 
-  const handleFileSelect = (uploadedFile: File) => {
+  const handleFileSelect = useCallback((uploadedFile: File) => {
     setFile(uploadedFile);
     setStep(AppStep.SIGNATURE);
-  };
+  }, []);
+
+  // Listen for file-open events from Tauri (file association / "Open With")
+  useTauriFileOpen(handleFileSelect);
 
   const handleSignatureSave = (dataUrl: string) => {
     setSignatureData({
@@ -85,23 +91,25 @@ export default function App() {
   const handleDragStart = (e: React.DragEvent) => {
     if (!signedUrl || !file) return;
 
-    // Do NOT preventDefault() here, as it stops the native anchor drag behavior
     e.dataTransfer.effectAllowed = 'copy';
 
     const filename = `signed_${file.name}`;
     const mimeType = 'application/pdf';
 
-    // Chrome/Edge specific: allows dragging file out to desktop/apps
-    // Format: "mimetype:filename:absolute_url"
     e.dataTransfer.setData('DownloadURL', `${mimeType}:${filename}:${signedUrl}`);
-
-    // Fallbacks for other contexts
     e.dataTransfer.setData('text/uri-list', signedUrl);
     e.dataTransfer.setData('text/plain', signedUrl);
-
-    // Add text/html as a fallback for rich text editors (like some webmail)
-    // This inserts a clickable link instead of just the URL if dropped into a text area
     e.dataTransfer.setData('text/html', `<a href="${signedUrl}" download="${filename}">Download Signed Document</a>`);
+  };
+
+  const handleNativeDragStart = async () => {
+    if (!signedBlob || !file) return;
+    const filename = `signed_${file.name}`;
+    try {
+      await startNativeDrag(signedBlob, filename);
+    } catch (err) {
+      console.error('Native drag failed:', err);
+    }
   };
 
   const resetApp = () => {
@@ -111,6 +119,8 @@ export default function App() {
     setSignedUrl(null);
     setSignedBlob(null);
   };
+
+  const desktop = isDesktop();
 
   // Step 1: Upload
   if (step === AppStep.UPLOAD) {
@@ -189,33 +199,59 @@ export default function App() {
           </div>
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Document Signed!</h2>
           <p className="text-slate-600 mb-8">
-            Your file is ready. Drag the card below to your <b>Desktop</b> first, then to your email.
+            {desktop
+              ? 'Your file is ready. Drag the card below into an email or Finder.'
+              : 'Your file is ready. Drag the card below to your Desktop first, then to your email.'}
           </p>
 
-          <a
-            href={signedUrl}
-            download={`signed_${file.name}`}
-            className="group relative block bg-slate-50 border-2 border-dashed border-indigo-200 rounded-xl p-6 mb-8 cursor-grab active:cursor-grabbing hover:bg-indigo-50 hover:border-indigo-400 transition-all select-none text-decoration-none"
-            draggable={true}
-            onDragStart={handleDragStart}
-          >
-            <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
-              <div className="relative">
-                <FileText className="w-12 h-12 text-indigo-500" />
-                <div className="absolute -right-1 -bottom-1 bg-white rounded-full p-0.5 shadow-sm">
-                  <CheckCircle className="w-4 h-4 text-green-500" />
+          {desktop ? (
+            <div
+              className="group relative block bg-slate-50 border-2 border-dashed border-indigo-200 rounded-xl p-6 mb-8 cursor-grab active:cursor-grabbing hover:bg-indigo-50 hover:border-indigo-400 transition-all select-none"
+              onMouseDown={handleNativeDragStart}
+            >
+              <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
+                <div className="relative">
+                  <FileText className="w-12 h-12 text-indigo-500" />
+                  <div className="absolute -right-1 -bottom-1 bg-white rounded-full p-0.5 shadow-sm">
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                  </div>
+                </div>
+                <span className="font-medium text-slate-700 truncate max-w-[200px] block">signed_{file.name}</span>
+                <div className="flex items-center text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-1 rounded-full">
+                  <Mail className="w-3 h-3 mr-1" />
+                  Drag to Email or Finder
                 </div>
               </div>
-              <span className="font-medium text-slate-700 truncate max-w-[200px] block">signed_{file.name}</span>
-              <div className="flex items-center text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-1 rounded-full">
-                <Mail className="w-3 h-3 mr-1" />
-                Drag to Desktop
+              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                <ArrowRight className="w-4 h-4 text-indigo-400" />
               </div>
             </div>
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-              <ArrowRight className="w-4 h-4 text-indigo-400" />
-            </div>
-          </a>
+          ) : (
+            <a
+              href={signedUrl}
+              download={`signed_${file.name}`}
+              className="group relative block bg-slate-50 border-2 border-dashed border-indigo-200 rounded-xl p-6 mb-8 cursor-grab active:cursor-grabbing hover:bg-indigo-50 hover:border-indigo-400 transition-all select-none text-decoration-none"
+              draggable={true}
+              onDragStart={handleDragStart}
+            >
+              <div className="flex flex-col items-center justify-center space-y-2 pointer-events-none">
+                <div className="relative">
+                  <FileText className="w-12 h-12 text-indigo-500" />
+                  <div className="absolute -right-1 -bottom-1 bg-white rounded-full p-0.5 shadow-sm">
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                  </div>
+                </div>
+                <span className="font-medium text-slate-700 truncate max-w-[200px] block">signed_{file.name}</span>
+                <div className="flex items-center text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-1 rounded-full">
+                  <Mail className="w-3 h-3 mr-1" />
+                  Drag to Desktop
+                </div>
+              </div>
+              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                <ArrowRight className="w-4 h-4 text-indigo-400" />
+              </div>
+            </a>
+          )}
 
           <div className="space-y-3">
             {canShare && signedBlob && (

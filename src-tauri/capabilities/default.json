@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for AutoSign",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "fs:allow-temp-write",
+    "fs:allow-temp-read",
+    "drag:default"
+  ]
+}

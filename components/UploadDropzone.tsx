@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Upload, FileText, AlertCircle } from 'lucide-react';
+import { isDesktop } from '../services/platform';
 
 interface UploadDropzoneProps {
   onFileSelect: (file: File) => void;
@@ -9,6 +10,45 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ onFileSelect }) 
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // In Tauri mode, also listen for native drag-drop events from the OS
+  // This catches drops from email clients that don't trigger HTML5 drop events
+  useEffect(() => {
+    if (!isDesktop()) return;
+
+    let unlisten: (() => void) | undefined;
+
+    (async () => {
+      const { listen } = await import('@tauri-apps/api/event');
+      const { readFile } = await import('@tauri-apps/plugin-fs');
+
+      unlisten = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+        const paths = event.payload.paths;
+        if (!paths || paths.length === 0) return;
+
+        const filePath = paths[0];
+        if (!filePath.toLowerCase().endsWith('.pdf')) {
+          setError('Please upload a valid PDF file.');
+          return;
+        }
+
+        try {
+          const contents = await readFile(filePath);
+          const filename = filePath.split('/').pop() || 'document.pdf';
+          const file = new File([contents], filename, { type: 'application/pdf' });
+          setError(null);
+          onFileSelect(file);
+        } catch (err) {
+          console.error('Failed to read dropped file:', err);
+          setError('Failed to read the dropped file.');
+        }
+      });
+    })();
+
+    return () => {
+      unlisten?.();
+    };
+  }, [onFileSelect]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -53,8 +93,8 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ onFileSelect }) 
         onClick={() => inputRef.current?.click()}
         className={`
           relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-300 group
-          ${isDragging 
-            ? 'border-indigo-500 bg-indigo-50 scale-[1.02]' 
+          ${isDragging
+            ? 'border-indigo-500 bg-indigo-50 scale-[1.02]'
             : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
           }
         `}
@@ -66,7 +106,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ onFileSelect }) 
           ref={inputRef}
           onChange={handleInputChange}
         />
-        
+
         <div className="flex flex-col items-center justify-center space-y-4">
           <div className={`p-4 rounded-full transition-colors duration-300 ${isDragging ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-500'}`}>
             <Upload className="w-8 h-8" />
